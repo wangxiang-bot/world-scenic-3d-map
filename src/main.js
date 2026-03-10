@@ -632,7 +632,7 @@ function getEmbeddableImageUrl(url = '') {
   if (!/^https?:\/\//i.test(normalizedUrl)) return '';
 
   if (/whc\.unesco\.org\/(?:document\/|en\/documents\/|include\/tool_image_bootstrap)/i.test(normalizedUrl)) {
-    return '';
+    return normalizedUrl;
   }
 
   return /\.(?:avif|gif|jpe?g|png|svg|webp)(?:[?#].*)?$/i.test(normalizedUrl) ? normalizedUrl : '';
