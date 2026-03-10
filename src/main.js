@@ -265,6 +265,8 @@ const state = {
   detailLoading: false,
 };
 
+const blockedImageSiteIds = new Set();
+
 let globe;
 let THREE_NS;
 let textureLoader;
@@ -625,6 +627,32 @@ function getOfficialImageUrl(detail) {
   return /^https?:\/\//i.test(detail?.imageUrl || '') ? detail.imageUrl : '';
 }
 
+function getEmbeddableImageUrl(url = '') {
+  const normalizedUrl = String(url).trim();
+  if (!/^https?:\/\//i.test(normalizedUrl)) return '';
+
+  if (/whc\.unesco\.org\/(?:document\/|en\/documents\/|include\/tool_image_bootstrap)/i.test(normalizedUrl)) {
+    return '';
+  }
+
+  return /\.(?:avif|gif|jpe?g|png|svg|webp)(?:[?#].*)?$/i.test(normalizedUrl) ? normalizedUrl : '';
+}
+
+function getSiteImageVisual(site, detail) {
+  const officialImageUrl = getOfficialImageUrl(detail);
+  const embeddableImageUrl = blockedImageSiteIds.has(site.id) ? '' : getEmbeddableImageUrl(officialImageUrl);
+  const fallback = !embeddableImageUrl;
+
+  return {
+    src: embeddableImageUrl || site.markerAsset.src,
+    alt: `${site.cleanName}${fallback ? ' 示意图' : ' 图片'}`,
+    caption: stripMarkup(detail?.imageCaption || `${site.cleanName} 图片`),
+    note: fallback ? '官方图片受站点防盗链限制，当前改为站内示意图展示。' : '',
+    fallback,
+    officialImageUrl,
+  };
+}
+
 function renderMediaPanel(filteredSites) {
   const selectedSite = getSelectedSite(filteredSites);
   mediaPanelEl.classList.toggle('is-hidden', !selectedSite);
@@ -635,8 +663,8 @@ function renderMediaPanel(filteredSites) {
   }
 
   const detail = state.selectedDetail;
-  const officialImageUrl = getOfficialImageUrl(detail);
-  const primaryCaption = stripMarkup(detail?.imageCaption || `${selectedSite.cleanName} 官方图片`);
+  const meta = CATEGORY_META[selectedSite.category];
+  const siteImage = getSiteImageVisual(selectedSite, detail);
 
   mediaPanelEl.innerHTML = `
     <div class="panel-shell">
@@ -646,43 +674,38 @@ function renderMediaPanel(filteredSites) {
           <h2>${escapeHtml(selectedSite.cleanName)}</h2>
         </div>
         <div class="panel-head-actions">
-          ${officialImageUrl ? `<a class="panel-link" href="${officialImageUrl}" target="_blank" rel="noreferrer">官方图片</a>` : ''}
           <a class="panel-link" href="${selectedSite.link}" target="_blank" rel="noreferrer">官方详情</a>
         </div>
       </div>
       <div class="media-grid">
-        ${
-          officialImageUrl
-            ? `
-              <figure class="media-card">
-                <img id="media-primary-image" src="${officialImageUrl}" alt="${escapeHtml(selectedSite.cleanName)} 图片" loading="lazy" referrerpolicy="no-referrer" />
-                <figcaption data-role="primary-caption">${escapeHtml(primaryCaption)}</figcaption>
-              </figure>
-            `
-            : `
-              <div class="media-empty">
-                <div class="panel-kicker">暂无官方图片</div>
-                <p>当前遗产点没有可直接展示的 UNESCO 官方图片，可以通过右上角按钮进入官网查看。</p>
-              </div>
-            `
-        }
+        <figure class="media-card${siteImage.fallback ? ' is-illustration' : ''}" style="--media-color: ${meta.color}; --media-accent: ${meta.accent};">
+          <div class="media-frame">
+            <img
+              id="media-primary-image"
+              src="${siteImage.src}"
+              alt="${escapeHtml(siteImage.alt)}"
+              loading="lazy"
+              ${siteImage.fallback ? '' : 'referrerpolicy="no-referrer"'}
+            />
+            ${siteImage.fallback ? '<span class="media-badge">景点示意图</span>' : ''}
+          </div>
+          <figcaption>
+            <strong>${escapeHtml(siteImage.fallback ? selectedSite.cleanName : siteImage.caption)}</strong>
+            ${siteImage.note ? `<p class="media-note">${escapeHtml(siteImage.note)}</p>` : ''}
+          </figcaption>
+        </figure>
       </div>
     </div>
   `;
 
   const primaryImageEl = mediaPanelEl.querySelector('#media-primary-image');
   primaryImageEl?.addEventListener('click', () => {
-    openImageLightbox(officialImageUrl, `${selectedSite.cleanName} 图片`);
+    openImageLightbox(siteImage.src, siteImage.alt);
   });
   primaryImageEl?.addEventListener('error', () => {
-    const mediaGridEl = mediaPanelEl.querySelector('.media-grid');
-    if (!mediaGridEl) return;
-    mediaGridEl.innerHTML = `
-      <div class="media-empty">
-        <div class="panel-kicker">官方图片加载失败</div>
-        <p>这个景点的官方图片当前无法直接显示，可以通过右上角按钮打开 UNESCO 官网图片或详情页。</p>
-      </div>
-    `;
+    if (siteImage.fallback) return;
+    blockedImageSiteIds.add(selectedSite.id);
+    render();
   });
 }
 
@@ -697,18 +720,19 @@ function renderDetailPanel(filteredSites) {
 
   const detail = state.selectedDetail;
   const meta = CATEGORY_META[selectedSite.category];
-  const officialImageUrl = getOfficialImageUrl(detail);
-  const mobileMediaMarkup = officialImageUrl
-    ? `
-      <figure class="detail-mobile-media">
-        <img id="detail-mobile-image" src="${officialImageUrl}" alt="${escapeHtml(selectedSite.cleanName)} 图片" loading="lazy" referrerpolicy="no-referrer" />
-      </figure>
-    `
-    : `
-      <div class="detail-mobile-media is-empty">
-        <span>暂无图片</span>
-      </div>
-    `;
+  const siteImage = getSiteImageVisual(selectedSite, detail);
+  const mobileMediaMarkup = `
+    <figure class="detail-mobile-media${siteImage.fallback ? ' is-illustration' : ''}" style="--media-color: ${meta.color}; --media-accent: ${meta.accent};">
+      <img
+        id="detail-mobile-image"
+        src="${siteImage.src}"
+        alt="${escapeHtml(siteImage.alt)}"
+        loading="lazy"
+        ${siteImage.fallback ? '' : 'referrerpolicy="no-referrer"'}
+      />
+      ${siteImage.fallback ? '<span class="media-badge">示意图</span>' : ''}
+    </figure>
+  `;
 
   detailPanelEl.innerHTML = `
     <div class="panel-shell">
@@ -752,7 +776,6 @@ function renderDetailPanel(filteredSites) {
         ${selectedSite.componentsCount > 1 ? `<span>${selectedSite.componentsCount} 个组成部分</span>` : ''}
       </div>
       <div class="detail-actions">
-        ${officialImageUrl ? `<a class="detail-link" href="${officialImageUrl}" target="_blank" rel="noreferrer">打开官方图片</a>` : ''}
         <a class="detail-link" href="${selectedSite.link}" target="_blank" rel="noreferrer">查看 UNESCO 官方详情</a>
       </div>
     </div>
@@ -760,13 +783,12 @@ function renderDetailPanel(filteredSites) {
 
   detailPanelEl.querySelector('#clear-selection')?.addEventListener('click', clearSelection);
   detailPanelEl.querySelector('#detail-mobile-image')?.addEventListener('click', () => {
-    openImageLightbox(officialImageUrl, `${selectedSite.cleanName} 图片`);
+    openImageLightbox(siteImage.src, siteImage.alt);
   });
   detailPanelEl.querySelector('#detail-mobile-image')?.addEventListener('error', () => {
-    const mobileMediaEl = detailPanelEl.querySelector('.detail-mobile-media');
-    if (!mobileMediaEl) return;
-    mobileMediaEl.classList.add('is-empty');
-    mobileMediaEl.innerHTML = '<span>图片暂不可用</span>';
+    if (siteImage.fallback) return;
+    blockedImageSiteIds.add(selectedSite.id);
+    render();
   });
 }
 
